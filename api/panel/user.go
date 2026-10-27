@@ -15,6 +15,8 @@ type OnlineUser struct {
 	IP  string
 }
 
+// Id is opaque: legacy account ID or a stable subscription node_user_id.
+// Keep the wire field names unchanged for old panels and old nodes.
 type UserInfo struct {
 	Id          int    `json:"id" msgpack:"id"`
 	Uuid        string `json:"uuid" msgpack:"uuid"`
@@ -57,6 +59,7 @@ func (c *Client) GetUserList() ([]UserInfo, error) {
 			return nil, fmt.Errorf("decode user list error: %w", err)
 		}
 	} else {
+		userlist.Users = make([]UserInfo, 0)
 		dec := jsontext.NewDecoder(r.RawResponse.Body)
 		for {
 			tok, err := dec.ReadToken()
@@ -86,6 +89,9 @@ func (c *Client) GetUserList() ([]UserInfo, error) {
 			userlist.Users = append(userlist.Users, u)
 		}
 	}
+	if userlist.Users == nil {
+		return nil, fmt.Errorf("decode user list error: expected users array")
+	}
 	c.userEtag = r.Header().Get("ETag")
 	return userlist.Users, nil
 }
@@ -97,12 +103,7 @@ func (c *Client) GetUserAlive() (map[int]int, error) {
 	r, err := c.client.R().
 		ForceContentType("application/json").
 		Get(path)
-	if err != nil || r.StatusCode() >= 399 {
-		c.AliveMap.Alive = make(map[int]int)
-		return c.AliveMap.Alive, nil
-	}
-	if r == nil || r.RawResponse == nil {
-		fmt.Printf("received nil response or raw response")
+	if err != nil || r == nil || r.RawResponse == nil || r.StatusCode() >= 399 {
 		c.AliveMap.Alive = make(map[int]int)
 		return c.AliveMap.Alive, nil
 	}
@@ -148,7 +149,7 @@ func (c *Client) ReportNodeOnlineUsers(data *map[int][]string) error {
 	err = c.checkResponse(r, path, err)
 
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return nil

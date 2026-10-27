@@ -1,3 +1,13 @@
+# ChampagneA7 维护说明
+
+本 Fork 保持原 UniProxy 接口，支持旧面板和面板侧多订阅身份映射；原有节点配置无需新增字段。
+
+- [Xboard 多订阅对接文档](docs/XBOARD_SUBSCRIPTIONS.md)
+- [安装与配置保留升级](https://github.com/ChampagneA7/V2bX-script)
+- 本版保持原作者锁定的定制内核依赖，未升级 Xray / sing-box。
+
+下面保留原项目说明。
+
 # V2bX
 
 [![](https://img.shields.io/badge/TgChat-UnOfficialV2Board%E4%BA%A4%E6%B5%81%E7%BE%A4-green)](https://t.me/unofficialV2board)

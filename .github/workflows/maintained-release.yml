@@ -1,0 +1,98 @@
+name: ChampagneA7 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New release tag, for example v2026.10.27"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: champagne-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+      - name: Test old and new panel contracts
+        env:
+          GOEXPERIMENT: jsonv2
+        run: |
+          go test -mod=readonly ./api/panel -run '^TestCompatibility' -count=1
+          go test -mod=readonly node/user_diff.go node/user_diff_test.go -count=1
+
+  build:
+    needs: compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            asset: linux-64
+          - arch: arm64
+            asset: linux-arm64-v8a
+          - arch: s390x
+            asset: linux-s390x
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+      - name: Build pinned cores
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+          GOEXPERIMENT: jsonv2
+          RELEASE_TAG: ${{ inputs.version }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9][A-Za-z0-9._-]*$ ]] || exit 1
+          mkdir -p build_assets dist
+          go build -mod=readonly -o build_assets/V2bX -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X github.com/InazumaV/V2bX/cmd.version=$RELEASE_TAG -s -w -buildid="
+      - name: Check native executable
+        if: matrix.arch == 'amd64'
+        run: ./build_assets/V2bX version
+      - name: Package compatible fresh-install assets
+        env:
+          ASSET: V2bX-${{ matrix.asset }}.zip
+        run: |
+          cp README.md LICENSE build_assets/
+          cp example/*.json build_assets/
+          for data in geoip geosite; do
+            curl -fLsS --retry 3 "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/$data.dat" -o "build_assets/$data.dat"
+          done
+          (cd build_assets && zip -qr "../dist/$ASSET" .)
+          (cd dist && sha256sum "$ASSET" > "$ASSET.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish maintained release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.version }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.zip dist/*.sha256 --target "$GITHUB_SHA" --title "ChampagneA7 V2bX $RELEASE_TAG" --notes-file RELEASE_NOTES.md --latest
