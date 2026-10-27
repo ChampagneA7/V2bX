@@ -2,9 +2,9 @@ package panel
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -32,6 +32,9 @@ type AliveMap struct {
 	Alive map[int]int `json:"alive"`
 }
 
+// InvalidateUserList makes the next poll retry a list that the core could not apply.
+func (c *Client) InvalidateUserList() { c.userEtag = "" }
+
 // GetUserList will pull user from v2board
 func (c *Client) GetUserList() ([]UserInfo, error) {
 	const path = "/api/v1/server/UniProxy/user"
@@ -55,42 +58,55 @@ func (c *Client) GetUserList() ([]UserInfo, error) {
 	userlist := &UserListBody{}
 	if strings.Contains(r.Header().Get("Content-Type"), "application/x-msgpack") {
 		decoder := msgpack.NewDecoder(r.RawResponse.Body)
-		if err := decoder.Decode(userlist); err != nil {
-			return nil, fmt.Errorf("decode user list error: %w", err)
-		}
-	} else {
-		userlist.Users = make([]UserInfo, 0)
-		dec := jsontext.NewDecoder(r.RawResponse.Body)
-		for {
-			tok, err := dec.ReadToken()
-			if err != nil {
-				return nil, fmt.Errorf("decode user list error: %w", err)
-			}
-			if tok.Kind() == '"' && tok.String() == "users" {
-				break
-			}
-		}
-		tok, err := dec.ReadToken()
+		length, err := decoder.DecodeMapLen()
 		if err != nil {
 			return nil, fmt.Errorf("decode user list error: %w", err)
 		}
-		if tok.Kind() != '[' {
-			return nil, fmt.Errorf(`decode user list error: expected "users" array`)
-		}
-		for dec.PeekKind() != ']' {
-			val, err := dec.ReadValue()
+		seenUsers := false
+		for i := 0; i < length; i++ {
+			key, err := decoder.DecodeString()
 			if err != nil {
-				return nil, fmt.Errorf("decode user list error: read user object: %w", err)
+				return nil, fmt.Errorf("decode user list error: %w", err)
 			}
-			var u UserInfo
-			if err := json.Unmarshal(val, &u); err != nil {
-				return nil, fmt.Errorf("decode user list error: unmarshal user error: %w", err)
+			if key == "users" {
+				if seenUsers {
+					return nil, fmt.Errorf("decode user list error: duplicate users member")
+				}
+				seenUsers = true
+				err = decoder.Decode(&userlist.Users)
+			} else {
+				err = decoder.Skip()
 			}
-			userlist.Users = append(userlist.Users, u)
+			if err != nil {
+				return nil, fmt.Errorf("decode user list error: %w", err)
+			}
+		}
+		if _, err := decoder.PeekCode(); err != io.EOF {
+			return nil, fmt.Errorf("decode user list error: trailing MessagePack data")
+		}
+	} else {
+		if err := json.UnmarshalRead(r.RawResponse.Body, userlist); err != nil {
+			return nil, fmt.Errorf("decode user list error: %w", err)
 		}
 	}
+
 	if userlist.Users == nil {
 		return nil, fmt.Errorf("decode user list error: expected users array")
+	}
+	seenIDs := make(map[int]struct{}, len(userlist.Users))
+	seenUUIDs := make(map[string]struct{}, len(userlist.Users))
+	for _, user := range userlist.Users {
+		if user.Id <= 0 || user.Uuid == "" {
+			return nil, fmt.Errorf("decode user list error: missing or invalid identity")
+		}
+		if _, exists := seenIDs[user.Id]; exists {
+			return nil, fmt.Errorf("decode user list error: duplicate identity %d", user.Id)
+		}
+		if _, exists := seenUUIDs[user.Uuid]; exists {
+			return nil, fmt.Errorf("decode user list error: duplicate credential")
+		}
+		seenIDs[user.Id] = struct{}{}
+		seenUUIDs[user.Uuid] = struct{}{}
 	}
 	c.userEtag = r.Header().Get("ETag")
 	return userlist.Users, nil

@@ -26,7 +26,7 @@ func (b *Sing) AddUsers(p *core.AddUsersParams) (added int, err error) {
 	b.users.mapLock.Lock()
 	defer b.users.mapLock.Unlock()
 	for i := range p.Users {
-		b.users.uidMap[p.Users[i].Uuid] = p.Users[i].Id
+		b.rememberUserID(p.Tag, p.Users[i])
 	}
 	switch p.NodeInfo.Type {
 	case "vless":
@@ -151,12 +151,12 @@ func (b *Sing) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic,
 					traffic.UpCounter.Store(0)
 					traffic.DownCounter.Store(0)
 				}
-				if b.users.uidMap[uuid] == 0 {
+				if b.userID(tag, uuid) == 0 {
 					c.Delete(uuid)
 					return true
 				}
 				trafficSlice = append(trafficSlice, panel.UserTraffic{
-					UID:      b.users.uidMap[uuid],
+					UID:      b.userID(tag, uuid),
 					Upload:   up,
 					Download: down,
 				})
@@ -207,7 +207,7 @@ func (b *Sing) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo
 			c := v.(*counter.TrafficCounter)
 			c.Delete(users[i].Uuid)
 		}
-		delete(b.users.uidMap, users[i].Uuid)
+		b.forgetUserID(tag, users[i].Uuid)
 		uuids[i] = users[i].Uuid
 	}
 	err := del.DelUsers(uuids)

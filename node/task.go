@@ -180,6 +180,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		// have deleted users
 		err = c.server.DelUsers(deleted, c.tag, c.info)
 		if err != nil {
+			c.apiClient.InvalidateUserList()
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
@@ -195,6 +196,15 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			Users:    added,
 		})
 		if err != nil {
+			c.apiClient.InvalidateUserList()
+			// Restore previously removed identities while waiting for a retry.
+			if len(deleted) > 0 {
+				if _, restoreErr := c.server.AddUsers(&vCore.AddUsersParams{
+					Tag: c.tag, NodeInfo: c.info, Users: deleted,
+				}); restoreErr != nil {
+					log.WithError(restoreErr).WithField("tag", c.tag).Error("Restore previous users failed; retrying next poll")
+				}
+			}
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,

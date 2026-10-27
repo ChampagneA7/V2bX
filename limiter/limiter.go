@@ -88,12 +88,19 @@ func DeleteLimiter(tag string) {
 }
 
 func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel.UserInfo) {
+	replacementIDs := make(map[int]struct{}, len(added))
+	for _, user := range added {
+		replacementIDs[user.Id] = struct{}{}
+	}
 	for i := range deleted {
 		l.UserLimitInfo.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.UserOnlineIP.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.SpeedLimiter.Delete(format.UserTag(tag, deleted[i].Uuid))
 		delete(l.UUIDtoUID, deleted[i].Uuid)
-		delete(l.AliveList, deleted[i].Id)
+		// A changed limit replaces a local entry, not its cross-node online state.
+		if _, replaced := replacementIDs[deleted[i].Id]; !replaced {
+			delete(l.AliveList, deleted[i].Id)
+		}
 	}
 	for i := range added {
 		userLimit := &UserLimitInfo{

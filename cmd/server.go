@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"syscall"
 
+	"github.com/InazumaV/V2bX/common/readiness"
 	"github.com/InazumaV/V2bX/conf"
 	vCore "github.com/InazumaV/V2bX/core"
 	"github.com/InazumaV/V2bX/limiter"
@@ -37,6 +38,8 @@ func init() {
 }
 
 func serverHandle(_ *cobra.Command, _ []string) {
+	readiness.Clear(os.Getpid())
+	defer readiness.Clear(os.Getpid())
 	showVersion()
 	c := conf.New()
 	err := c.LoadFromPath(config)
@@ -86,6 +89,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	sdns := os.Getenv("SING_DNS_PATH")
 	if watch {
 		err = c.Watch(config, xdns, sdns, func() {
+			readiness.Clear(os.Getpid())
 			nodes.Close()
 			err = vc.Close()
 			if err != nil {
@@ -109,12 +113,18 @@ func serverHandle(_ *cobra.Command, _ []string) {
 				return
 			}
 			log.Info("Nodes restarted")
+			if err := readiness.Mark(os.Getpid()); err != nil {
+				log.WithError(err).Warn("Could not record node readiness")
+			}
 			runtime.GC()
 		})
 		if err != nil {
 			log.WithField("err", err).Error("start watch failed")
 			return
 		}
+	}
+	if err := readiness.Mark(os.Getpid()); err != nil {
+		log.WithError(err).Warn("Could not record node readiness")
 	}
 	// clear memory
 	runtime.GC()

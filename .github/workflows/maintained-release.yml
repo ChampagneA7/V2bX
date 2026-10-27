@@ -7,6 +7,10 @@ on:
         description: "New release tag, for example v2026.10.27"
         required: true
         type: string
+      script_commit:
+        description: "Reviewed 40-character V2bX-script commit to package"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,12 +27,24 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - uses: actions/checkout@v4
+        with:
+          repository: ChampagneA7/V2bX-script
+          ref: ${{ inputs.script_commit }}
+          path: installer
+      - name: Test the exact installer commit
+        run: |
+          bash installer/tests/upgrade_test.sh
+          bash installer/tests/install_guard_test.sh
+          bash installer/tests/readiness_test.sh
       - name: Test old and new panel contracts
         env:
           GOEXPERIMENT: jsonv2
         run: |
-          go test -mod=readonly ./api/panel -run '^TestCompatibility' -count=1
+          go test -mod=readonly ./api/panel ./limiter ./common/readiness -run '^Test(Compatibility|Review|Readiness)' -count=1
           go test -mod=readonly node/user_diff.go node/user_diff_test.go -count=1
+          go test -mod=readonly node/controller.go node/task.go node/user.go node/user_diff.go node/user_update_review_test.go node/review_isolation_test.go -run '^TestReview' -count=1
+          go test -mod=readonly -tags "with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" ./core/sing -run '^TestReview' -count=1
 
   build:
     needs: compatibility
@@ -65,7 +81,14 @@ jobs:
       - name: Package compatible fresh-install assets
         env:
           ASSET: V2bX-${{ matrix.asset }}.zip
+          SCRIPT_COMMIT: ${{ inputs.script_commit }}
         run: |
+          [[ "$SCRIPT_COMMIT" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          for script in V2bX.sh upgrade.sh; do
+            curl -fLsS --retry 3 "https://raw.githubusercontent.com/ChampagneA7/V2bX-script/$SCRIPT_COMMIT/$script" -o "build_assets/$script"
+            bash -n "build_assets/$script"
+          done
+          printf "%s\n" "$SCRIPT_COMMIT" > build_assets/SCRIPT_COMMIT
           cp README.md LICENSE build_assets/
           cp example/*.json build_assets/
           for data in geoip geosite; do
@@ -90,9 +113,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Publish maintained release
+      - name: Create draft release for review
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.version }}
         run: |
-          gh release create "$RELEASE_TAG" dist/*.zip dist/*.sha256 --target "$GITHUB_SHA" --title "ChampagneA7 V2bX $RELEASE_TAG" --notes-file RELEASE_NOTES.md --latest
+          gh release create "$RELEASE_TAG" dist/*.zip dist/*.sha256 --target "$GITHUB_SHA" --title "ChampagneA7 V2bX $RELEASE_TAG" --notes-file RELEASE_NOTES.md --draft
