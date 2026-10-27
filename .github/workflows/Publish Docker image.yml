@@ -1,12 +1,8 @@
 name: Publish Docker image
 
+# Optional Docker publishing is separate from the installer release workflow.
 on:
   workflow_dispatch:
-  release:
-    types: [published]
-  pull_request:
-    branches:
-      - 'dev_new'
 
 env:
   REGISTRY: ghcr.io
@@ -24,6 +20,7 @@ jobs:
     steps:
       - name: Prepare
         run: |
+          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV  
 
@@ -76,6 +73,9 @@ jobs:
     needs:
       - build
     steps:
+      - name: Normalize image name
+        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
